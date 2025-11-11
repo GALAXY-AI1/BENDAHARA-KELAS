@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bendahara Kelas — Minimal</title>
+  <style>
+    :root{
+      --bg:#f7f8fb; --card:#ffffff; --muted:#666; --accent:#0f62fe;
+      --success:#0b8a55; --danger:#d93025; --radius:12px;
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    }
+    body{ margin:0; padding:24px; background:var(--bg); color:#0b1220; }
+    .container{ max-width:900px; margin:0 auto; }
+    header{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:18px; }
+    h1{ font-size:20px; margin:0; }
+    .card{ background:var(--card); border-radius:var(--radius); box-shadow:0 6px 18px rgba(12,20,40,0.06); padding:16px; }
+    .balance{ font-size:20px; font-weight:700; margin-bottom:12px; }
+    .row{ display:flex; gap:8px; align-items:center; }
+    input[type="text"], input[type="number"]{
+      padding:10px 12px; border-radius:10px; border:1px solid #e6e9ee; outline:none; font-size:14px;
+      background:linear-gradient(180deg,#fff,#fbfdff);
+    }
+    button{
+      padding:10px 12px; border-radius:10px; border:0; cursor:pointer; font-weight:600;
+    }
+    .btn-primary{ background:var(--accent); color:white; }
+    .btn-success{ background:var(--success); color:white; }
+    .btn-danger{ background:var(--danger); color:white; }
+    .spaced{ margin-top:12px; display:flex; gap:8px; }
+    table{ width:100%; border-collapse:collapse; margin-top:12px; font-size:14px; }
+    th, td{ text-align:left; padding:10px 8px; }
+    thead th{ color:var(--muted); font-weight:600; font-size:13px; }
+    tbody tr{ border-top:1px solid #f0f2f6; }
+    .amount{ font-weight:700; }
+    .amount.income{ color:var(--success); }
+    .amount.expense{ color:var(--danger); }
+    .muted{ color:var(--muted); font-size:13px; }
+    .empty{ text-align:center; padding:18px; color:var(--muted); }
+    footer{ margin-top:16px; display:flex; gap:8px; justify-content:flex-end; align-items:center; }
+    @media (max-width:640px){
+      .row{ flex-direction:column; align-items:stretch; }
+      .spaced{ flex-direction:column; }
+      header{ flex-direction:column; align-items:flex-start; gap:8px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Bendahara Kelas</h1>
+        <div class="muted">Simpan pemasukan & pengeluaran — sederhana</div>
+      </div>
+      <div class="muted">Local app • Tidak perlu server</div>
+    </header>
+
+    <div class="card" id="appCard">
+      <div class="balance" id="balance">Saldo: Rp0</div>
+
+      <div class="row" style="gap:10px;">
+        <input id="desc" type="text" placeholder="Keterangan (mis. iuran kelas)" />
+        <input id="amount" type="number" placeholder="Jumlah (angka)" />
+      </div>
+
+      <div class="spaced">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="btnIncome" class="btn-primary btn-success">+ Pemasukan</button>
+          <button id="btnExpense" class="btn-primary btn-danger">- Pengeluaran</button>
+          <button id="btnClear" class="" title="Hapus semua transaksi (irreversible)" style="background:#f3f4f6;color:#0b1220;border-radius:10px;padding:10px 12px;border:1px solid #e6e9ee;">Clear Semua</button>
+        </div>
+        <div style="margin-left:auto; display:flex; gap:8px;">
+          <button id="btnExport" class="btn-primary">Export CSV</button>
+          <button id="btnImport" class="" title="Import CSV sederhana" style="background:#fff;border:1px solid #e6e9ee;border-radius:10px;padding:10px 12px;">Import CSV</button>
+          <input id="fileInput" type="file" accept=".csv" style="display:none" />
+        </div>
+      </div>
+
+      <table aria-live="polite">
+        <thead>
+          <tr>
+            <th style="width:40%;">Keterangan</th>
+            <th style="width:18%;">Jumlah</th>
+            <th style="width:22%;">Waktu</th>
+            <th style="width:10%;">Aksi</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <!-- rows injected here -->
+        </tbody>
+      </table>
+
+      <div id="empty" class="empty" style="display:none;">Belum ada transaksi. Tambahkan pemasukan atau pengeluaran.</div>
+    </div>
+
+    <footer>
+      <div class="muted">Disimpan di browser (localStorage)</div>
+    </footer>
+  </div>
+
+  <script>
+    // Kunci penyimpanan
+    const STORAGE_KEY = 'bendahara_transactions_v1';
+
+    // Elemen
+    const descEl = document.getElementById('desc');
+    const amtEl = document.getElementById('amount');
+    const btnIncome = document.getElementById('btnIncome');
+    const btnExpense = document.getElementById('btnExpense');
+    const btnExport = document.getElementById('btnExport');
+    const btnClear = document.getElementById('btnClear');
+    const tbody = document.getElementById('tbody');
+    const balanceEl = document.getElementById('balance');
+    const emptyEl = document.getElementById('empty');
+    const btnImport = document.getElementById('btnImport');
+    const fileInput = document.getElementById('fileInput');
+
+    // Model: array of {id, description, amount, isIncome, timestamp}
+    let list = load();
+
+    // Init render
+    render();
+
+    // Event listeners
+    btnIncome.addEventListener('click', ()=> addTx(true));
+    btnExpense.addEventListener('click', ()=> addTx(false));
+    btnExport.addEventListener('click', exportCsv);
+    btnClear.addEventListener('click', ()=> {
+      if(!confirm('Yakin hapus semua transaksi? Tindakan ini tidak bisa dibatalkan.')) return;
+      list = []; save(); render();
+    });
+    btnImport.addEventListener('click', ()=> fileInput.click());
+    fileInput.addEventListener('change', handleFile);
+
+    function addTx(isIncome){
+      const desc = descEl.value.trim();
+      let amt = amtEl.value.trim();
+      if(!desc || !amt) {
+        alert('Isi keterangan dan jumlah terlebih dahulu.');
+        return;
+      }
+      amt = Number(amt);
+      if(Number.isNaN(amt) || amt <= 0){
+        alert('Jumlah harus angka positif.');
+        return;
+      }
+      const tx = {
+        id: `${Date.now()}_${Math.floor(Math.random()*9999)}`,
+        description: desc,
+        amount: Math.round(amt),
+        isIncome: Boolean(isIncome),
+        timestamp: Date.now()
+      };
+      // push at start (baru di atas)
+      list.unshift(tx);
+      save();
+      render();
+      // reset inputs
+      descEl.value = '';
+      amtEl.value = '';
+      descEl.focus();
+    }
+
+    function render(){
+      tbody.innerHTML = '';
+      if(list.length === 0){ emptyEl.style.display = 'block'; } else { emptyEl.style.display = 'none'; }
+      for(const tx of list){
+        const tr = document.createElement('tr');
+
+        const tdDesc = document.createElement('td');
+        tdDesc.textContent = tx.description;
+        tdDesc.className = 'muted';
+
+        const tdAmt = document.createElement('td');
+        tdAmt.className = 'amount ' + (tx.isIncome ? 'income' : 'expense');
+        tdAmt.textContent = (tx.isIncome ? '+ ' : '- ') + formatRupiah(tx.amount);
+
+        const tdTime = document.createElement('td');
+        tdTime.textContent = formatDate(tx.timestamp);
+        tdTime.className = 'muted';
+
+        const tdAct = document.createElement('td');
+        const btnDel = document.createElement('button');
+        btnDel.textContent = 'Hapus';
+        btnDel.style.padding = '6px 10px';
+        btnDel.style.borderRadius = '10px';
+        btnDel.style.border = 'none';
+        btnDel.style.cursor = 'pointer';
+        btnDel.style.background = '#fff';
+        btnDel.style.border = '1px solid #e6e9ee';
+        btnDel.addEventListener('click', ()=> {
+          if(!confirm('Hapus transaksi ini?')) return;
+          list = list.filter(x => x.id !== tx.id);
+          save();
+          render();
+        });
+        tdAct.appendChild(btnDel);
+
+        tr.appendChild(tdDesc);
+        tr.appendChild(tdAmt);
+        tr.appendChild(tdTime);
+        tr.appendChild(tdAct);
+        tbody.appendChild(tr);
+      }
+
+      // update balance
+      const bal = list.reduce((s, t) => s + (t.isIncome ? t.amount : -t.amount), 0);
+      balanceEl.textContent = 'Saldo: Rp' + formatRupiah(bal);
+    }
+
+    function save(){
+      try{
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+      }catch(e){
+        console.error('Gagal simpan localStorage', e);
+      }
+    }
+
+    function load(){
+      try{
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if(!raw) return [];
+        const parsed = JSON.parse(raw);
+        if(Array.isArray(parsed)) return parsed;
+        return [];
+      }catch(e){
+        console.error('Gagal baca localStorage', e);
+        return [];
+      }
+    }
+
+    function formatRupiah(n){
+      const sign = n < 0 ? '-' : '';
+      const x = Math.abs(n).toString().split('.');
+      let int = x[0];
+      int = int.replace(/\B(?=(\d{3})+(?!\d))/g, '.'); // gunakan dot thousand separator
+      return sign + int;
+    }
+
+    function formatDate(ts){
+      const d = new Date(ts);
+      // Format: dd-mm-yyyy hh:mm
+      const dd = String(d.getDate()).padStart(2,'0');
+      const mm = String(d.getMonth()+1).padStart(2,'0');
+      const yy = String(d.getFullYear());
+      const hh = String(d.getHours()).padStart(2,'0');
+      const min = String(d.getMinutes()).padStart(2,'0');
+      return `${dd}-${mm}-${yy} ${hh}:${min}`;
+    }
+
+    function exportCsv(){
+      if(list.length === 0){ alert('Tidak ada data untuk diexport.'); return; }
+      const lines = [];
+      lines.push('id,description,amount,isIncome,timestamp');
+      for(const t of list){
+        // escape double quotes in description
+        const desc = String(t.description).replace(/"/g, '""');
+        lines.push(`${t.id},"${desc}",${t.amount},${t.isIncome},${t.timestamp}`);
+      }
+      const blob = new Blob([lines.join('\\n')], {type: 'text/csv;charset=utf-8;'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const date = new Date();
+      const fname = `bendahara_export_${date.getFullYear()}${String(date.getMonth()+1).padStart(2,'0')}${String(date.getDate()).padStart(2,'0')}.csv`;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    // IMPORT simple CSV: expects header id,description,amount,isIncome,timestamp
+    function handleFile(e){
+      const f = e.target.files?.[0];
+      if(!f) return;
+      const reader = new FileReader();
+      reader.onload = function(ev){
+        const txt = ev.target.result;
+        try{
+          const rows = txt.split(/\\r?\\n/).filter(r=>r.trim().length>0);
+          if(rows.length <= 1){ alert('CSV kosong atau tidak valid'); return; }
+          const header = rows.shift().split(',');
+          const expected = ['id','description','amount','isIncome','timestamp'];
+          const headerLower = header.map(h=>h.trim().toLowerCase());
+          // If header includes those fields (in any order) parse by index
+          const idx = expected.map(k => headerLower.indexOf(k));
+          const missing = idx.some(i => i === -1);
+          if(missing){
+            alert('Format CSV tidak sesuai. Pastikan header: id,description,amount,isIncome,timestamp');
+            return;
+          }
+          const added = [];
+          for(const row of rows){
+            const cols = parseCSVRow(row);
+            if(cols.length < header.length) continue;
+            const t = {
+              id: cols[idx[0]] || `${Date.now()}_${Math.floor(Math.random()*9999)}`,
+              description: cols[idx[1]] || '',
+              amount: Number(cols[idx[2]] || 0),
+              isIncome: (cols[idx[3]] === 'true' || cols[idx[3]] === '1'),
+              timestamp: Number(cols[idx[4]] || Date.now())
+            };
+            added.push(t);
+          }
+          if(added.length === 0){ alert('Tidak ada baris valid yang ditemukan.'); return; }
+          // gabungkan (baru di depan)
+          list = [...added, ...list];
+          save();
+          render();
+          alert(`Import selesai: ${added.length} transaksi ditambahkan.`);
+        }catch(err){
+          console.error(err);
+          alert('Gagal import CSV: ' + err.message);
+        }
+      };
+      reader.readAsText(f, 'UTF-8');
+      // reset file input
+      e.target.value = '';
+    }
+
+    // very simple CSV row parser that handles quoted fields
+    function parseCSVRow(row){
+      const res = [];
+      let cur = '';
+      let inQuotes = false;
+      for(let i=0;i<row.length;i++){
+        const ch = row[i];
+        if(inQuotes){
+          if(ch === '"'){
+            if(row[i+1] === '"'){ cur += '"'; i++; } else { inQuotes = false; }
+          } else { cur += ch; }
+        } else {
+          if(ch === ','){ res.push(cur); cur = ''; }
+          else if(ch === '"'){ inQuotes = true; }
+          else { cur += ch; }
+        }
+      }
+      res.push(cur);
+      return res;
+    }
+  </script>
+</body>
+</html>
